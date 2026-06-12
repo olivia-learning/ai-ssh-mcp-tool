@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from ai_ssh_mcp.config import APP_DIR_ENV
 from ai_ssh_mcp.maintenance import (
@@ -23,6 +23,7 @@ from ai_ssh_mcp.server import (
     maint_plan_change,
     maint_runbook,
 )
+from ai_ssh_mcp.store import CommandResult
 
 
 class PolicyAndMaintenanceTests(unittest.TestCase):
@@ -147,6 +148,117 @@ class PolicyAndMaintenanceTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["decision"], "require_user_confirmation")
         session.assert_not_called()
+        self.assertIn("plan_id", result["results"])
+
+    def test_runbook_confirmed_without_plan_id_is_rejected_before_connection(self):
+        target = runbook_dir()
+        target.mkdir(parents=True, exist_ok=True)
+        path = target / "restart_network.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "summary": "Restart network service",
+                    "backup_steps": ["service network status"],
+                    "steps": ["service network restart"],
+                    "verification_steps": ["service network status"],
+                    "rollback_steps": ["service network restart"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with patch("ai_ssh_mcp.tools_maint.EmbeddedSSHSession") as session:
+            result = maint_runbook("restart_network", user_confirmed=True)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["decision"], "require_user_confirmation")
+        session.assert_not_called()
+
+    def test_confirmed_runbook_plan_executes_full_plan(self):
+        target = runbook_dir()
+        target.mkdir(parents=True, exist_ok=True)
+        path = target / "restart_network.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "summary": "Restart network service",
+                    "backup_steps": ["service network status"],
+                    "steps": ["service network restart"],
+                    "verification_steps": ["service network status"],
+                    "rollback_steps": ["service network restart"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        plan_result = maint_runbook("restart_network", user_confirmed=False)
+        plan_id = plan_result["results"]["plan_id"]
+        fake_session = Mock()
+        fake_session._run_shell_command.side_effect = lambda command, purpose: CommandResult(
+            command=command,
+            purpose=purpose,
+            stdout="ok",
+            stderr="",
+            exit_status=0,
+            duration_ms=1,
+        )
+        with (
+            patch("ai_ssh_mcp.tools_maint.load_config", return_value=Mock()),
+            patch("ai_ssh_mcp.tools_maint.CredentialStore") as credentials,
+            patch("ai_ssh_mcp.tools_maint.EmbeddedSSHSession") as ssh_session,
+        ):
+            credentials.return_value.get_device_secrets.return_value = Mock()
+            ssh_session.return_value.__enter__.return_value = fake_session
+            result = maint_runbook(
+                "restart_network",
+                plan_id=plan_id,
+                user_confirmed=True,
+            )
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            [item["command"] for item in result["results"]],
+            [
+                "service network status",
+                "service network restart",
+                "service network status",
+            ],
+        )
+
+    def test_runbook_plan_id_must_match_name(self):
+        target = runbook_dir()
+        target.mkdir(parents=True, exist_ok=True)
+        path = target / "restart_network.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "summary": "Restart network service",
+                    "backup_steps": ["service network status"],
+                    "steps": ["service network restart"],
+                    "verification_steps": ["service network status"],
+                    "rollback_steps": ["service network restart"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        plan_result = maint_runbook("restart_network", user_confirmed=False)
+        with self.assertRaises(ValueError):
+            maint_runbook("other_runbook", plan_id=plan_result["results"]["plan_id"], user_confirmed=True)
+
+    def test_device_maintainer_agent_documents_approval_workflow(self):
+        text = Path(".opencode/agents/device-maintainer.md").read_text(encoding="utf-8")
+        self.assertIn("mode: subagent", text)
+        self.assertIn("ai_ssh_device_*: allow", text)
+        self.assertIn("Produce an execution plan before any maintenance action.", text)
+        self.assertIn("After final user approval, execute the approved plan automatically.", text)
+        self.assertIn("maint_runbook(name, plan_id=<shown plan_id>, user_confirmed=true)", text)
+
+    def test_opencode_example_keeps_mcp_config_separate_and_portable(self):
+        text = Path("opencode.example.json").read_text(encoding="utf-8")
+        config = json.loads(text)
+        device_mcp = config["mcp"]["ai_ssh_device"]
+        self.assertEqual(device_mcp["type"], "local")
+        self.assertEqual(device_mcp["command"], ["python", "-m", "ai_ssh_mcp"])
+        self.assertEqual(device_mcp["cwd"], ".")
+        self.assertNotIn("C:\\Users", text)
+        self.assertNotIn("ssh_password", text)
+        self.assertNotIn("su_password", text)
 
 
 if __name__ == "__main__":

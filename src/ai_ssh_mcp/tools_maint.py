@@ -60,7 +60,26 @@ def maint_apply_change(plan_id: str, user_confirmed: bool = False) -> dict[str, 
         raise
 
 
-def maint_runbook(name: str, user_confirmed: bool = False) -> dict[str, Any]:
+def maint_runbook(
+    name: str,
+    user_confirmed: bool = False,
+    plan_id: str | None = None,
+) -> dict[str, Any]:
+    if plan_id:
+        plan = MaintenanceStore().get_plan(plan_id)
+        if plan.change_type != "runbook" or plan.target != name:
+            raise ValueError("runbook plan_id does not match the requested runbook name")
+        if not user_confirmed:
+            return {
+                "ok": False,
+                "decision": "require_user_confirmation",
+                "risk_level": plan.risk_level,
+                "results": plan.to_dict(),
+                "audit_id": plan.plan_id,
+                "message": "Show this runbook execution plan to the user before execution.",
+            }
+        return maint_apply_change(plan.plan_id, user_confirmed=True)
+
     runbook = load_runbook(name)
     plan = runbook_to_plan(name, runbook)
     if not user_confirmed:
@@ -72,7 +91,14 @@ def maint_runbook(name: str, user_confirmed: bool = False) -> dict[str, Any]:
             "audit_id": plan.plan_id,
             "message": "Runbook was converted to a maintenance plan. Confirm before execution.",
         }
-    return maint_apply_change(plan.plan_id, user_confirmed=True)
+    return {
+        "ok": False,
+        "decision": "require_user_confirmation",
+        "risk_level": plan.risk_level,
+        "results": plan.to_dict(),
+        "audit_id": plan.plan_id,
+        "message": "Runbook execution requires confirming the displayed plan_id first.",
+    }
 
 
 MAINT_TOOLS = [

@@ -21,7 +21,7 @@
 ## 安装
 
 ```powershell
-cd C:\Users\olivi\Documents\Create_tool
+cd <PROJECT_ROOT>
 py -m venv .venv
 .\.venv\Scripts\python -m pip install -U pip
 .\.venv\Scripts\python -m pip install -e .
@@ -31,13 +31,25 @@ py -m venv .venv
 
 ## opencode 配置
 
-opencode 使用 `opencode.json` 配置 MCP。全局配置文件通常在：
+项目把 MCP 和 OpenCode agent 分开开放：
+
+- MCP 服务代码在 `src/ai_ssh_mcp/`，通过 `python -m ai_ssh_mcp` 启动。
+- OpenCode 维护 agent 在 `.opencode/agents/device-maintainer.md`，只描述 agent 行为和权限。
+- MCP 启动配置放在 `opencode.json`，不要写进 agent 文件。
+
+仓库提供了一个不含本机路径和密码的示例：
 
 ```text
-C:\Users\olivi\.config\opencode\opencode.json
+opencode.example.json
 ```
 
-配置示例：
+如果你使用项目级 OpenCode 配置，可以复制成项目内的 `opencode.json` 后按本机环境调整；如果你使用全局配置，全局配置文件通常在：
+
+```text
+C:\Users\<你的用户名>\.config\opencode\opencode.json
+```
+
+示例内容：
 
 ```json
 {
@@ -46,17 +58,19 @@ C:\Users\olivi\.config\opencode\opencode.json
     "ai_ssh_device": {
       "type": "local",
       "command": [
-        "C:\\Users\\olivi\\Documents\\Create_tool\\.venv\\Scripts\\python.exe",
+        "python",
         "-m",
         "ai_ssh_mcp"
       ],
-      "cwd": "C:\\Users\\olivi\\Documents\\Create_tool",
+      "cwd": ".",
       "enabled": true,
       "timeout": 10000
     }
   }
 }
 ```
+
+如果全局 `opencode.json` 不是从项目目录启动，请把 `cwd` 改成你的项目绝对路径，并把 `command` 里的 `python` 改成你的虚拟环境 Python 路径，例如 `.venv\Scripts\python.exe`。
 
 也可以用：
 
@@ -66,6 +80,36 @@ opencode mcp list
 ```
 
 修改 MCP 代码或重新安装后，重启 opencode 才能看到最新工具列表。
+
+## opencode 维护 Agent
+
+项目内提供了一个 OpenCode subagent：
+
+```text
+.opencode/agents/device-maintainer.md
+```
+
+它用于设备维测和维护操作。日常可以先继续使用普通 OpenCode AI；当你希望进入维护流程时，可以明确说：
+
+```text
+用 device-maintainer 维护 agent，帮我检查设备网络问题，先给执行方案。
+```
+
+这个维护 agent 的固定流程是：先理解你的维护想法，必要时做只读诊断，然后输出执行方案。方案必须展示 `plan_id` 或 runbook 名称、执行步骤、验证步骤、回滚/恢复步骤、风险等级，以及是否还需要最终人工确认。
+
+你可以继续沟通修改方案，例如：
+
+```text
+这个方案第 2 步改成先看最近 50 行日志。
+```
+
+最终确认时可以说：
+
+```text
+我确认按这个最终方案执行。
+```
+
+确认后，agent 会自动执行该方案内的步骤，不再逐条命令确认。这里的“自动执行”不是无条件运行任意命令：必须先有执行方案、用户最终确认，并且 MCP 校验方案 ID、命令哈希和策略通过。
 
 ## 常用对话示例
 
@@ -142,6 +186,24 @@ target = "network"
 use ai_ssh_device 调用 maint_apply_change，user_confirmed=true。
 ```
 
+执行预定义 runbook：
+
+```text
+use ai_ssh_device。先调用 maint_runbook：
+name = "restart_network"
+user_confirmed = false
+```
+
+确认方案后执行同一个 runbook 计划：
+
+```text
+我确认按这个最终 runbook 方案执行。
+use ai_ssh_device 调用 maint_runbook：
+name = "restart_network"
+plan_id = "上一步返回的 plan_id"
+user_confirmed = true
+```
+
 ## 策略和维护
 
 `policy_evaluate_operation` 会返回：
@@ -166,7 +228,7 @@ use ai_ssh_device 调用 maint_apply_change，user_confirmed=true。
 
 - `maint_plan_change` 只生成计划，不连接设备。
 - `maint_apply_change` 只执行已保存、哈希未篡改、用户确认的维护计划。
-- `maint_runbook` 只读取本机 `runbooks/` 里的预定义 JSON runbook，不接受临时拼接危险命令。
+- `maint_runbook` 只读取本机 `runbooks/` 里的预定义 JSON runbook，不接受临时拼接危险命令；执行时必须带上已经展示给用户的 `plan_id`。
 
 runbook 文件放在本地状态目录的 `runbooks/` 下，不提交到 Git。
 

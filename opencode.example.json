@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "ai_ssh_device": {
+      "type": "local",
+      "command": [
+        "python",
+        "-m",
+        "ai_ssh_mcp"
+      ],
+      "cwd": ".",
+      "enabled": true,
+      "timeout": 10000
+    }
+  }
+}
