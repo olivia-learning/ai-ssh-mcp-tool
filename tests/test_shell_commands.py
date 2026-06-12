@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from ai_ssh_mcp.server import run_shell_commands
+from ai_ssh_mcp.tools_diag import diag_run_shell
 from ai_ssh_mcp.ssh_client import validate_shell_commands
 
 
@@ -21,14 +21,13 @@ class ShellCommandTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_shell_commands(["cat /etc/shadow"])
 
-    def test_run_requires_user_confirmation_before_any_connection(self):
-        with patch("ai_ssh_mcp.server.EmbeddedSSHSession") as session:
-            result = run_shell_commands(["pwd"], user_confirmed=False)
+    def test_dangerous_shell_command_is_denied_before_any_connection(self):
+        with patch("ai_ssh_mcp.tools_diag.EmbeddedSSHSession") as session:
+            result = diag_run_shell(["cat /etc/shadow"], user_confirmed=False)
         self.assertFalse(result["ok"])
-        self.assertEqual(result["status"], "needs_user_confirmation")
+        self.assertEqual(result["decision"], "deny")
         session.assert_not_called()
 
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -16,6 +16,8 @@ env/
 config.json
 state.json
 allowlist.json
+policy.json
+runbooks/
 *.tmp
 
 # Editor and OS files

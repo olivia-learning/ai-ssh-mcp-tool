@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from ai_ssh_mcp.config import APP_DIR_ENV
 from ai_ssh_mcp.security import generate_plan
-from ai_ssh_mcp.server import plan_diagnostic_task, run_approved_plan
+from ai_ssh_mcp.tools_diag import diag_plan_task, diag_run_plan
 from ai_ssh_mcp.store import AuditStore
 
 
@@ -25,11 +25,11 @@ class StoreAndServerTests(unittest.TestCase):
             old = os.environ.get(APP_DIR_ENV)
             os.environ[APP_DIR_ENV] = tmp
             try:
-                plan = plan_diagnostic_task("检查网络")
-                with patch("ai_ssh_mcp.server.EmbeddedSSHSession") as session:
-                    result = run_approved_plan(plan["approval_id"], user_confirmed=False)
+                plan = diag_plan_task("检查网络")
+                with patch("ai_ssh_mcp.tools_diag.EmbeddedSSHSession") as session:
+                    result = diag_run_plan(plan["audit_id"], user_confirmed=False)
                 self.assertFalse(result["ok"])
-                self.assertEqual(result["status"], "needs_user_confirmation")
+                self.assertEqual(result["decision"], "require_user_confirmation")
                 session.assert_not_called()
             finally:
                 if old is None:
@@ -40,4 +40,3 @@ class StoreAndServerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
