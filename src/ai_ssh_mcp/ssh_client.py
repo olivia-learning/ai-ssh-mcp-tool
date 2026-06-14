@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import stat
 import time
 import uuid
 from dataclasses import dataclass
@@ -13,6 +12,7 @@ from .config import DeviceConfig
 from .credentials import DeviceSecrets
 from .security import DiagnosticCommand, truncate_output, validate_command_safety, validate_commands
 from .store import CommandResult
+from .tftp import TftpReceiveServer, infer_local_host_for_device, wait_briefly_for_server
 
 
 class SSHExecutionError(RuntimeError):
@@ -154,49 +154,72 @@ class EmbeddedSSHSession:
             for command in commands
         ]
 
-    def download_files_sftp(
+    def download_files_tftp(
         self,
         remote_paths: list[str],
         local_dir: str,
+        tftp_bind_host: str = "0.0.0.0",
+        tftp_server_host: str | None = None,
+        tftp_port: int = 6969,
         max_bytes_per_file: int = 50 * 1024 * 1024,
+        transfer_timeout: int = 60,
     ) -> list[DownloadedFile]:
         if not remote_paths:
             raise ValueError("remote_paths is required")
         if max_bytes_per_file <= 0:
             raise ValueError("max_bytes_per_file must be positive")
-        client = self._require_client()
+        if transfer_timeout <= 0:
+            raise ValueError("transfer_timeout must be positive")
         target_dir = Path(local_dir).expanduser().resolve()
         target_dir.mkdir(parents=True, exist_ok=True)
+        server_host = tftp_server_host or infer_local_host_for_device(
+            self.config.host, self.config.port
+        )
 
         results: list[DownloadedFile] = []
-        sftp = client.open_sftp()
-        try:
-            used_names: set[str] = set()
-            for remote_path in remote_paths:
-                validate_remote_file_path(remote_path)
-                filename = safe_local_filename(remote_path)
-                filename = unique_filename(filename, used_names)
-                used_names.add(filename)
-                local_path = target_dir / filename
-                attrs = sftp.stat(remote_path)
-                if stat.S_ISDIR(attrs.st_mode):
-                    raise ValueError(f"Remote path is a directory, not a file: {remote_path}")
-                size = int(attrs.st_size or 0)
-                if size > max_bytes_per_file:
-                    raise ValueError(
-                        f"Remote file is {size} bytes, above max_bytes_per_file={max_bytes_per_file}: {remote_path}"
-                    )
-                sftp.get(remote_path, str(local_path))
-                results.append(
-                    DownloadedFile(
-                        remote_path=remote_path,
-                        local_path=str(local_path),
-                        size_bytes=size,
-                        ok=True,
-                    )
+        used_names: set[str] = set()
+        for remote_path in remote_paths:
+            validate_remote_file_path(remote_path)
+            filename = safe_local_filename(remote_path)
+            filename = unique_filename(filename, used_names)
+            used_names.add(filename)
+            local_path = target_dir / filename
+            server = TftpReceiveServer(
+                bind_host=tftp_bind_host,
+                port=tftp_port,
+                expected_filename=filename,
+                destination_path=local_path,
+                timeout_seconds=transfer_timeout,
+                max_bytes=max_bytes_per_file,
+            )
+            server.start()
+            wait_briefly_for_server()
+            port = server.bound_port or tftp_port
+            command = build_tftp_put_command(
+                remote_path=remote_path,
+                remote_filename=filename,
+                server_host=server_host,
+                server_port=port,
+            )
+            command_result = self._run_shell_command(
+                command=command,
+                purpose="TFTP file download from device",
+                timeout=transfer_timeout,
+            )
+            if command_result.exit_status != 0:
+                raise SSHExecutionError(
+                    f"TFTP put command failed for {remote_path}: {command_result.stdout}"
                 )
-        finally:
-            sftp.close()
+            transfer = server.wait()
+            results.append(
+                DownloadedFile(
+                    remote_path=remote_path,
+                    local_path=transfer.path,
+                    size_bytes=transfer.size_bytes,
+                    ok=transfer.ok,
+                    message=f"Downloaded through TFTP from device command: {command}",
+                )
+            )
         return results
 
     def run_interactive_tool(
@@ -403,6 +426,24 @@ def validate_remote_file_path(remote_path: str) -> None:
         raise ValueError("remote path must not contain '..'")
     if SENSITIVE_REMOTE_PATH_PATTERN.search(normalized):
         raise ValueError(f"remote path is blocked as sensitive: {remote_path}")
+
+
+def build_tftp_put_command(
+    remote_path: str,
+    remote_filename: str,
+    server_host: str,
+    server_port: int,
+) -> str:
+    if not server_host or not re.match(r"^[A-Za-z0-9_.:-]+$", server_host):
+        raise ValueError("tftp server host contains unsupported characters")
+    if server_port < 0 or server_port > 65535:
+        raise ValueError("tftp server port must be between 0 and 65535")
+    return (
+        "tftp -p "
+        f"-l {shell_single_quote(remote_path)} "
+        f"-r {shell_single_quote(remote_filename)} "
+        f"{shell_single_quote(server_host)} {server_port}"
+    )
 
 
 def safe_local_filename(remote_path: str) -> str:

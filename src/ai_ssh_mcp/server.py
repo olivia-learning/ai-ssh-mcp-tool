@@ -1,5 +1,16 @@
 from __future__ import annotations
 
+from .tools_capture import (
+    CAPTURE_TOOLS,
+    capture_apply_plan,
+    capture_build_plan,
+    capture_close,
+    capture_prepare,
+    capture_save_recording,
+    capture_start_recording,
+    capture_status,
+    capture_stop_recording,
+)
 from .tools_core import (
     CORE_TOOLS,
     core_configure_device,
@@ -31,6 +42,7 @@ TOOL_GROUPS = {
     "interactive": INTERACTIVE_TOOLS,
     "policy": POLICY_TOOLS,
     "maint": MAINT_TOOLS,
+    "capture": CAPTURE_TOOLS,
 }
 
 REGISTERED_TOOLS = [

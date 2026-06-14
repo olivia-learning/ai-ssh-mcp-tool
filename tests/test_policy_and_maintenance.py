@@ -64,13 +64,15 @@ class PolicyAndMaintenanceTests(unittest.TestCase):
         self.assertIn("files_download", REGISTERED_TOOL_NAMES)
         self.assertIn("interactive_run_tool", REGISTERED_TOOL_NAMES)
         self.assertIn("maint_apply_change", REGISTERED_TOOL_NAMES)
+        self.assertIn("capture_prepare", REGISTERED_TOOL_NAMES)
+        self.assertIn("capture_save_recording", REGISTERED_TOOL_NAMES)
         self.assertNotIn("configure_device", REGISTERED_TOOL_NAMES)
         self.assertNotIn("run_shell_commands", REGISTERED_TOOL_NAMES)
 
     def test_single_mcp_keeps_internal_tool_groups(self):
         self.assertEqual(
             set(TOOL_GROUPS),
-            {"core", "diag", "files", "interactive", "policy", "maint"},
+            {"core", "diag", "files", "interactive", "policy", "maint", "capture"},
         )
         self.assertEqual(
             [tool.__name__ for tool in TOOL_GROUPS["core"]],
@@ -248,6 +250,8 @@ class PolicyAndMaintenanceTests(unittest.TestCase):
         self.assertIn("Produce an execution plan before any maintenance action.", text)
         self.assertIn("After final user approval, execute the approved plan automatically.", text)
         self.assertIn("maint_runbook(name, plan_id=<shown plan_id>, user_confirmed=true)", text)
+        self.assertIn("Use the `capture_*` tools", text)
+        self.assertIn("capture_start_recording", text)
 
     def test_opencode_example_keeps_mcp_config_separate_and_portable(self):
         text = Path("opencode.example.json").read_text(encoding="utf-8")

@@ -12,11 +12,12 @@
 - `diag_list_whitelist` / `diag_add_whitelist` / `diag_delete_whitelist`：管理诊断命令白名单。
 - `diag_plan_task` / `diag_run_plan`：先生成只读诊断计划，再确认执行。
 - `diag_run_shell`：执行低风险普通 shell 查询命令，并返回输出和退出码。
-- `files_download`：通过 SFTP over SSH 将设备文件下载到本机指定目录。
+- `files_download`：通过 TFTP 将设备文件下载到本机指定目录；SSH 只负责触发设备端 `tftp -p`。
 - `interactive_run_tool`：进入指定目录启动交互式后台工具，输入指令并读取提示符前的多行结果。
 - `policy_evaluate_operation`：独立评估某类操作的风险和审批决策。
 - `maint_plan_change` / `maint_apply_change`：两阶段维护操作，先生成计划，再确认执行。
 - `maint_runbook`：运行本地预定义维护 runbook。
+- `capture_prepare` / `capture_build_plan` / `capture_apply_plan` / `capture_start_recording` / `capture_stop_recording` / `capture_save_recording`：双 SSH 会话抓码流，第一版保存连接 B 输出到本机文件，不做 TFTP。
 
 ## 安装
 
@@ -159,6 +160,8 @@ local_dir = "C:\\Users\\olivi\\Downloads\\device_logs"
 user_confirmed = true
 ```
 
+`files_download` 会在本机临时启动 TFTP 接收服务，然后通过 SSH 让设备执行 `tftp -p` 把文件上传到本机。默认监听 `0.0.0.0:6969`；如果设备访问本机需要指定网卡 IP，可以传入 `tftp_server_host`，例如 `"192.168.1.100"`。如果 6969 端口被占用，可以传入其他 `tftp_port`。
+
 运行交互式后台工具：
 
 ```text
@@ -204,6 +207,29 @@ plan_id = "上一步返回的 plan_id"
 user_confirmed = true
 ```
 
+抓码流：
+
+```text
+用 device-maintainer 维护 agent，帮我抓码流。
+work_dir = "/path/to/tool"
+tool_command = "./xxx_debugging"
+tool_prompt_pattern = "debug>$"
+```
+
+固定流程：
+
+1. agent 调用 `capture_prepare`，MCP 会打开两个 SSH 连接：A 用于 `top` 和 debugging 工具，B 用于 `tty` 和码流输出承接。
+2. agent 展示 `capture_id`、连接 B 的 `tty`、`top` 输出/候选进程、`help` 输出和解析到的 `chl/rp` 命令候选。
+3. 用户指定要开启的模块，以及模块属于哪个进程。
+4. agent 调用 `capture_build_plan` 生成执行方案。
+5. 用户确认最终方案后，agent 调用 `capture_apply_plan(user_confirmed=true)` 执行 `chl/rp`。
+6. 用户说“启动码流保存”时，agent 调用 `capture_start_recording`。
+7. 用户说“停止码流保存”时，agent 调用 `capture_stop_recording`。
+8. 用户说“保存到某个本机路径”时，agent 调用 `capture_save_recording`。
+9. 完成后调用 `capture_close` 关闭 A/B 两个 SSH 连接。
+
+第一版不做 TFTP；码流由 MCP 直接读取连接 B 后续输出并保存到本机文件。长时间抓取期间不要重启 MCP/OpenCode，否则内存里的 `capture_id` 会丢失，需要重新 prepare。
+
 ## 策略和维护
 
 `policy_evaluate_operation` 会返回：
@@ -236,7 +262,7 @@ runbook 文件放在本地状态目录的 `runbooks/` 下，不提交到 Git。
 
 - 诊断白名单和自定义命令会经过危险命令扫描。
 - 执行计划保存命令哈希，执行前会再次校验。
-- 文件下载只接受明确的绝对文件路径，不支持通配符，不下载目录。
+- 文件下载走 TFTP，只接受明确的绝对文件路径，不支持通配符，不下载目录。
 - 文件下载会拒绝 `/etc/shadow`、`.ssh/`、`ssl/private/`、`/proc/kcore` 等敏感路径。
 - 交互式工具会等待提示符出现后再等待一段静默时间，确认输出结束。
 - 维护类动作必须经过策略判断；高风险动作必须 `user_confirmed=true`。
